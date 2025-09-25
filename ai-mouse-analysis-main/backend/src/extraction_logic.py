@@ -367,7 +367,11 @@ def extract_manual_range(file_path: str, neuron_id: str, start_time: float, end_
             adjusted_transient['end'] = int(transient['end'] + start_idx)
             adjusted_transient['amplitude'] = float(transient['amplitude'])
             adjusted_transient['duration'] = float(transient['duration'])
-            adjusted_transient['fwhm'] = float(transient['fwhm']) if not np.isnan(transient['fwhm']) else None
+            try:
+                fwhm_val = float(transient['fwhm'])
+                adjusted_transient['fwhm'] = fwhm_val if not np.isnan(fwhm_val) else None
+            except (ValueError, TypeError):
+                adjusted_transient['fwhm'] = None
             adjusted_transient['rise_time'] = float(transient['rise_time'])
             adjusted_transient['decay_time'] = float(transient['decay_time'])
             adjusted_transient['auc'] = float(transient['auc'])

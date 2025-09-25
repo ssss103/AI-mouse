@@ -77,35 +77,13 @@
                 />
               </el-form-item>
 
-              <!-- 位置数据（可选） -->
-              <el-form-item v-if="form.analysisType !== 'effect-size'" label="位置数据">
+              <!-- 位置标记工具 -->
+              <el-form-item v-if="form.analysisType !== 'effect-size'" label="位置标记">
                 <el-switch
                   v-model="form.hasPositionData"
-                  active-text="有位置数据"
-                  inactive-text="无位置数据"
+                  active-text="使用位置标记"
+                  inactive-text="不使用位置标记"
                 />
-              </el-form-item>
-
-              <!-- 位置数据上传 -->
-              <el-form-item v-if="form.hasPositionData && form.analysisType !== 'effect-size'" label="位置文件">
-                <el-upload
-                  ref="positionUploadRef"
-                  :auto-upload="false"
-                  :on-change="handlePositionFileChange"
-                  :before-remove="handlePositionFileRemove"
-                  :limit="1"
-                  accept=".xlsx,.xls,.csv"
-                >
-                  <el-button type="primary" plain>
-                    <el-icon><Upload /></el-icon>
-                    上传位置数据
-                  </el-button>
-                  <template #tip>
-                    <div class="el-upload__tip">
-                      包含神经元编号和相对坐标的CSV/Excel文件
-                    </div>
-                  </template>
-                </el-upload>
               </el-form-item>
 
               <!-- 操作按钮 -->
@@ -136,6 +114,20 @@
           </el-card>
 
           <div v-else class="analysis-results">
+            <!-- 位置标记工具 -->
+            <el-card v-if="form.hasPositionData && form.analysisType !== 'effect-size'" class="result-card">
+              <template #header>
+                <div class="card-header">
+                  <el-icon><Location /></el-icon>
+                  <span>神经元位置标记</span>
+                </div>
+              </template>
+              <PositionMarker 
+                @positions-updated="handlePositionsUpdated"
+                ref="positionMarkerRef"
+              />
+            </el-card>
+
             <!-- 分析摘要 -->
             <el-card class="summary-card">
               <template #header>
@@ -146,7 +138,7 @@
               </template>
               <div class="summary-content">
                 <el-row :gutter="20">
-                  <el-col :span="6" v-for="(value, key) in analysisResult.summary" :key="key">
+                  <el-col :span="6" v-for="(value, key) in getSummaryData()" :key="key">
                     <div class="summary-item">
                       <div class="summary-label">{{ getSummaryLabel(key) }}</div>
                       <div class="summary-value">{{ value }}</div>
@@ -298,9 +290,11 @@ import {
   Refresh, 
   Document, 
   Picture, 
-  Grid 
+  Grid,
+  Location
 } from '@element-plus/icons-vue'
 import { neuronAPI } from '@/api'
+import PositionMarker from '@/components/PositionMarker.vue'
 
 export default {
   name: 'NeuronAnalysis',
@@ -312,7 +306,9 @@ export default {
     Refresh,
     Document,
     Picture,
-    Grid
+    Grid,
+    Location,
+    PositionMarker
   },
   setup() {
     const loading = ref(false)
@@ -404,6 +400,30 @@ export default {
       return firstNeuron ? Object.keys(effectSizes[firstNeuron]) : []
     }
 
+    const getSummaryData = () => {
+      if (!analysisResult.value) {
+        console.log('没有分析结果数据')
+        return {}
+      }
+      
+      console.log('当前分析结果:', analysisResult.value)
+      
+      // 根据分析类型获取摘要数据
+      if (analysisResult.value.effect_size_analysis?.statistics) {
+        console.log('获取效应量分析统计:', analysisResult.value.effect_size_analysis.statistics)
+        return analysisResult.value.effect_size_analysis.statistics
+      } else if (analysisResult.value.principal_neuron_analysis?.statistics) {
+        console.log('获取主神经元分析统计:', analysisResult.value.principal_neuron_analysis.statistics)
+        return analysisResult.value.principal_neuron_analysis.statistics
+      } else if (analysisResult.value.statistics) {
+        console.log('获取综合分析统计:', analysisResult.value.statistics)
+        return analysisResult.value.statistics
+      }
+      
+      console.log('没有找到统计数据')
+      return {}
+    }
+
     const startAnalysis = async () => {
       if (!form.file) {
         ElMessage.warning('请先上传数据文件')
@@ -425,10 +445,8 @@ export default {
         formData.append('threshold', form.threshold.toString())
 
         // 如果有位置数据，添加到FormData
-        if (form.hasPositionData && form.positionFile) {
-          // 这里需要读取位置文件并转换为JSON格式
-          // 简化处理：假设位置数据已经在form.positionFile中
-          formData.append('positions_data', JSON.stringify({}))
+        if (form.hasPositionData && positionData.value) {
+          formData.append('positions_data', JSON.stringify(positionData.value))
         }
 
         // 显示进度
@@ -437,30 +455,75 @@ export default {
         }, 5000)
 
         // 调用相应的API
+        console.log('开始API调用，分析类型:', form.analysisType)
+        console.log('FormData内容:', formData)
+        console.log('文件信息:', {
+          name: form.file?.name,
+          size: form.file?.size,
+          type: form.file?.type
+        })
+        
         let response
         switch (form.analysisType) {
           case 'effect-size':
+            console.log('调用效应量分析API')
             response = await neuronAPI.effectSize(formData)
             break
           case 'principal':
+            console.log('调用主神经元分析API')
             response = await neuronAPI.principalAnalysis(formData)
             break
           case 'comprehensive':
+            console.log('调用综合分析API')
             response = await neuronAPI.comprehensiveAnalysis(formData)
             break
           default:
             throw new Error('未知的分析类型')
         }
+        
+        console.log('API响应:', response)
+        console.log('响应类型:', typeof response)
+        console.log('响应数据结构:', {
+          hasSuccess: !!response.success,
+          hasResult: !!response.result,
+          responseKeys: Object.keys(response || {}),
+          successValue: response.success
+        })
 
         if (progressInterval) {
           clearInterval(progressInterval)
         }
 
-        if (response.data.success) {
-          analysisResult.value = response.data.result
+        // 检查响应是否有效
+        if (!response) {
+          console.error('响应无效详情:', {
+            response: response,
+            responseType: typeof response
+          })
+          throw new Error('服务器响应无效')
+        }
+
+        // 检查响应格式 - 数据直接在response中，不在response.data中
+        if (response.success) {
+          console.log('响应结果数据:', response.result)
+          console.log('分析类型:', form.analysisType)
+          
+          // 根据分析类型包装结果数据
+          if (form.analysisType === 'effect-size') {
+            analysisResult.value = {
+              effect_size_analysis: response.result
+            }
+            console.log('包装后的效应量分析结果:', analysisResult.value)
+          } else if (form.analysisType === 'principal') {
+            analysisResult.value = {
+              principal_neuron_analysis: response.result
+            }
+          } else if (form.analysisType === 'comprehensive') {
+            analysisResult.value = response.result
+          }
           ElMessage.success('分析完成！')
         } else {
-          throw new Error(response.data.message || '分析失败')
+          throw new Error(response.message || '分析失败')
         }
 
       } catch (error) {
@@ -468,12 +531,42 @@ export default {
           clearInterval(progressInterval)
         }
         console.error('分析错误:', error)
-        ElMessage.error(`分析失败: ${error.message}`)
+        console.error('错误详情:', {
+          message: error.message,
+          response: error.response,
+          status: error.response?.status,
+          data: error.response?.data
+        })
+        
+        // 根据错误类型显示不同的错误信息
+        let errorMessage = '分析失败'
+        if (error.response) {
+          if (error.response.status === 500) {
+            errorMessage = '服务器内部错误，请检查后端日志'
+          } else if (error.response.status === 404) {
+            errorMessage = 'API端点不存在'
+          } else if (error.response.data && error.response.data.detail) {
+            errorMessage = error.response.data.detail
+          }
+        } else if (error.message) {
+          errorMessage = error.message
+        }
+        
+        ElMessage.error(`分析失败: ${errorMessage}`)
       } finally {
         loading.value = false
       }
     }
 
+    // 位置标记相关
+    const positionMarkerRef = ref(null)
+    const positionData = ref(null)
+    
+    const handlePositionsUpdated = (data) => {
+      positionData.value = data
+      console.log('位置数据已更新:', data)
+    }
+    
     const resetForm = () => {
       form.file = null
       form.positionFile = null
@@ -482,6 +575,7 @@ export default {
       form.threshold = 0.5
       form.hasPositionData = false
       analysisResult.value = null
+      positionData.value = null
       activeTab.value = 'effect-size'
       activeDataTab.value = 'key-neurons'
       
@@ -510,10 +604,14 @@ export default {
       formatThresholdTooltip,
       getAnalysisButtonText,
       getSummaryLabel,
+      getSummaryData,
       formatEffectSizesData,
       getBehaviors,
       startAnalysis,
-      resetForm
+      resetForm,
+      positionMarkerRef,
+      positionData,
+      handlePositionsUpdated
     }
   }
 }

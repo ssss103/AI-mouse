@@ -39,11 +39,21 @@ class EffectSizeCalculator:
         """
         检测并删除包含NaN值的行
         """
-        # 检查神经元数据中的NaN值
-        neuron_nan_mask = np.isnan(neuron_data).any(axis=1)
+        # 检查神经元数据中的NaN值 - 确保数据类型为数值型
+        try:
+            neuron_data_float = neuron_data.astype(float)
+            neuron_nan_mask = np.isnan(neuron_data_float).any(axis=1)
+        except (ValueError, TypeError):
+            # 如果无法转换为float，则检查是否有非数值数据
+            neuron_nan_mask = np.array([False] * len(neuron_data))
         
-        # 检查行为数据中的NaN值
-        behavior_nan_mask = np.isnan(behavior_data)
+        # 检查行为数据中的NaN值 - 确保数据类型为数值型
+        try:
+            behavior_data_float = behavior_data.astype(float)
+            behavior_nan_mask = np.isnan(behavior_data_float)
+        except (ValueError, TypeError):
+            # 如果无法转换为float，则检查是否有非数值数据
+            behavior_nan_mask = np.array([False] * len(behavior_data))
         
         # 合并NaN掩码
         combined_nan_mask = neuron_nan_mask | behavior_nan_mask
@@ -71,13 +81,33 @@ class EffectSizeCalculator:
         if len(group1) == 0 or len(group2) == 0:
             return 0.0
         
+        # 确保数据是数值类型
+        try:
+            group1 = group1.astype(float)
+            group2 = group2.astype(float)
+        except (ValueError, TypeError):
+            return 0.0
+        
         # 计算均值和标准差
         mean1, mean2 = np.mean(group1), np.mean(group2)
-        std1, std2 = np.std(group1, ddof=1), np.std(group2, ddof=1)
+        
+        # 计算标准差，处理样本数量不足的情况
+        n1, n2 = len(group1), len(group2)
+        if n1 <= 1:
+            std1 = 0.0
+        else:
+            std1 = np.std(group1, ddof=1)
+            
+        if n2 <= 1:
+            std2 = 0.0
+        else:
+            std2 = np.std(group2, ddof=1)
         
         # 计算合并标准差
-        n1, n2 = len(group1), len(group2)
-        pooled_std = np.sqrt(((n1 - 1) * std1**2 + (n2 - 1) * std2**2) / (n1 + n2 - 2))
+        if n1 + n2 <= 2:
+            pooled_std = 0.0
+        else:
+            pooled_std = np.sqrt(((n1 - 1) * std1**2 + (n2 - 1) * std2**2) / (n1 + n2 - 2))
         
         if pooled_std == 0:
             return 0.0
@@ -126,6 +156,10 @@ class EffectSizeCalculator:
                 effect_sizes[behavior].append(cohens_d)
         
         # 创建结果DataFrame
+        if not effect_sizes:
+            # 如果没有效应量数据，返回空的DataFrame
+            return pd.DataFrame()
+        
         result_df = pd.DataFrame(effect_sizes, index=neuron_columns)
         result_df.index.name = 'Neuron_ID'
         
@@ -140,13 +174,28 @@ class EffectSizeCalculator:
         
         key_neurons = {}
         
+        # 检查DataFrame是否为空
+        if effect_sizes_df.empty:
+            print("Debug: effect_sizes_df is empty")
+            return key_neurons
+        
+        print(f"Debug: effect_sizes_df columns: {effect_sizes_df.columns.tolist()}")
+        print(f"Debug: effect_sizes_df shape: {effect_sizes_df.shape}")
+        
         for behavior in effect_sizes_df.columns:
-            # 找出效应量超过阈值的神经元
-            significant_neurons = effect_sizes_df[
-                effect_sizes_df[behavior].abs() >= threshold
-            ].index.tolist()
-            
-            key_neurons[behavior] = significant_neurons
+            try:
+                # 找出效应量超过阈值的神经元
+                significant_neurons = effect_sizes_df[
+                    effect_sizes_df[behavior].abs() >= threshold
+                ].index.tolist()
+                
+                print(f"Debug: {behavior} -> significant_neurons type: {type(significant_neurons)}, value: {significant_neurons}")
+                
+                # 确保返回的是列表
+                key_neurons[behavior] = significant_neurons if isinstance(significant_neurons, list) else []
+            except Exception as e:
+                print(f"处理行为 {behavior} 时出错: {e}")
+                key_neurons[behavior] = []
         
         return key_neurons
     
@@ -232,8 +281,26 @@ def analyze_effect_sizes(data: pd.DataFrame,
     # 计算效应量
     effect_sizes_df = calculator.calculate_effect_sizes(data, behavior_column)
     
+    # 检查效应量数据是否为空
+    if effect_sizes_df.empty:
+        return {
+            'effect_sizes': {},
+            'key_neurons': {},
+            'statistics': {
+                'total_neurons': 0,
+                'total_behaviors': 0,
+                'nan_info': calculator.nan_info,
+                'threshold_used': threshold,
+                'key_neurons_count': {}
+            },
+            'histogram_image': None,
+            'heatmap_image': None
+        }
+    
     # 识别关键神经元
+    print(f"Debug: 开始识别关键神经元，threshold: {threshold}")
     key_neurons = calculator.identify_key_neurons(effect_sizes_df, threshold)
+    print(f"Debug: 关键神经元识别完成，结果: {key_neurons}")
     
     # 生成可视化
     histogram_image = calculator.create_effect_size_histogram(effect_sizes_df)
@@ -245,13 +312,28 @@ def analyze_effect_sizes(data: pd.DataFrame,
         'total_behaviors': len(effect_sizes_df.columns),
         'nan_info': calculator.nan_info,
         'threshold_used': threshold,
-        'key_neurons_count': {behavior: len(neurons) for behavior, neurons in key_neurons.items()}
+        'key_neurons_count': {behavior: len(neurons) if isinstance(neurons, (list, tuple)) else 0 for behavior, neurons in key_neurons.items()}
     }
     
+    # 确保所有numpy类型都转换为Python原生类型
+    def convert_numpy_types(obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, dict):
+            return {k: convert_numpy_types(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_numpy_types(item) for item in obj]
+        else:
+            return obj
+    
     return {
-        'effect_sizes': effect_sizes_df.to_dict(),
-        'key_neurons': key_neurons,
-        'statistics': stats,
+        'effect_sizes': convert_numpy_types(effect_sizes_df.to_dict()),
+        'key_neurons': convert_numpy_types(key_neurons),
+        'statistics': convert_numpy_types(stats),
         'histogram_image': histogram_image,
         'heatmap_image': heatmap_image
     }

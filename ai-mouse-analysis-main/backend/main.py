@@ -1394,6 +1394,11 @@ async def effect_size_analysis(
         # 读取数据
         data = pd.read_excel(temp_file.name)
         
+        # 确保数值列的数据类型正确
+        numeric_columns = data.select_dtypes(include=[np.number]).columns
+        for col in numeric_columns:
+            data[col] = pd.to_numeric(data[col], errors='coerce')
+        
         # 执行效应量分析
         result = analyze_effect_sizes(data, behavior_column, threshold)
         
@@ -1452,6 +1457,11 @@ async def principal_neuron_analysis(
         # 读取数据
         data = pd.read_excel(temp_file.name)
         
+        # 确保数值列的数据类型正确
+        numeric_columns = data.select_dtypes(include=[np.number]).columns
+        for col in numeric_columns:
+            data[col] = pd.to_numeric(data[col], errors='coerce')
+        
         # 解析位置数据（如果有）
         positions_dict = None
         if positions_data:
@@ -1495,6 +1505,11 @@ async def comprehensive_neuron_analysis(
         # 读取数据
         data = pd.read_excel(temp_file.name)
         
+        # 确保数值列的数据类型正确
+        numeric_columns = data.select_dtypes(include=[np.number]).columns
+        for col in numeric_columns:
+            data[col] = pd.to_numeric(data[col], errors='coerce')
+        
         # 解析位置数据（如果有）
         positions_dict = None
         if positions_data:
@@ -1518,7 +1533,7 @@ async def comprehensive_neuron_analysis(
             "position_analysis": position_result,
             "summary": {
                 "total_neurons": len(data.columns) - (1 if behavior_column else 0),
-                "total_behaviors": len(principal_result["summary"]["total_behaviors"]),
+                "total_behaviors": principal_result["summary"]["total_behaviors"],  # 直接使用整数，不调用len()
                 "key_neurons_found": principal_result["summary"]["total_key_neurons"],
                 "analysis_timestamp": datetime.now().isoformat()
             }

@@ -54,8 +54,11 @@ class PrincipalNeuronAnalyzer:
         
         # 分析每对行为之间的共享神经元
         for behavior1, behavior2 in combinations(behaviors, 2):
-            neurons1 = set(key_neurons[behavior1])
-            neurons2 = set(key_neurons[behavior2])
+            # 确保neurons是列表类型
+            neurons1_list = key_neurons[behavior1] if isinstance(key_neurons[behavior1], (list, tuple)) else []
+            neurons2_list = key_neurons[behavior2] if isinstance(key_neurons[behavior2], (list, tuple)) else []
+            neurons1 = set(neurons1_list)
+            neurons2 = set(neurons2_list)
             
             shared = neurons1.intersection(neurons2)
             unique1 = neurons1 - neurons2
@@ -72,9 +75,11 @@ class PrincipalNeuronAnalyzer:
         
         # 分析所有行为共享的神经元
         if len(behaviors) > 2:
-            all_shared = set(key_neurons[behaviors[0]])
+            first_neurons = key_neurons[behaviors[0]] if isinstance(key_neurons[behaviors[0]], (list, tuple)) else []
+            all_shared = set(first_neurons)
             for behavior in behaviors[1:]:
-                all_shared = all_shared.intersection(set(key_neurons[behavior]))
+                behavior_neurons = key_neurons[behavior] if isinstance(key_neurons[behavior], (list, tuple)) else []
+                all_shared = all_shared.intersection(set(behavior_neurons))
             
             shared_analysis['all_behaviors'] = {
                 'shared': list(all_shared),
@@ -102,7 +107,7 @@ class PrincipalNeuronAnalyzer:
         # 1. 关键神经元数量统计
         ax1 = axes[0]
         behaviors = list(key_neurons.keys())
-        counts = [len(neurons) for neurons in key_neurons.values()]
+        counts = [len(neurons) if isinstance(neurons, (list, tuple)) else 0 for neurons in key_neurons.values()]
         colors = [self.config.behavior_colors.get(behavior, 'gray') for behavior in behaviors]
         
         bars = ax1.bar(behaviors, counts, color=colors, alpha=0.7, edgecolor='black')
@@ -183,7 +188,7 @@ class PrincipalNeuronAnalyzer:
         # 2. 关键神经元统计
         ax2 = axes[0, 1]
         behaviors = list(key_neurons.keys())
-        counts = [len(neurons) for neurons in key_neurons.values()]
+        counts = [len(neurons) if isinstance(neurons, (list, tuple)) else 0 for neurons in key_neurons.values()]
         colors = [self.config.behavior_colors.get(behavior, 'gray') for behavior in behaviors]
         
         bars = ax2.bar(behaviors, counts, color=colors, alpha=0.7, edgecolor='black')
@@ -279,7 +284,13 @@ class PrincipalNeuronAnalyzer:
         # 基础统计
         total_neurons = len(effect_sizes_df)
         total_behaviors = len(effect_sizes_df.columns)
-        total_key_neurons = sum(len(neurons) for neurons in key_neurons.values())
+        
+        # 调试：检查key_neurons的数据类型
+        print(f"Debug: key_neurons type: {type(key_neurons)}")
+        for behavior, neurons in key_neurons.items():
+            print(f"Debug: {behavior} -> type: {type(neurons)}, value: {neurons}")
+        
+        total_key_neurons = sum(len(neurons) if isinstance(neurons, (list, tuple)) else 0 for neurons in key_neurons.values())
         
         # 效应量统计
         all_effect_sizes = []
@@ -287,11 +298,11 @@ class PrincipalNeuronAnalyzer:
             all_effect_sizes.extend(effect_sizes_df[col].values)
         
         effect_size_stats = {
-            'mean': np.mean(all_effect_sizes),
-            'std': np.std(all_effect_sizes),
-            'min': np.min(all_effect_sizes),
-            'max': np.max(all_effect_sizes),
-            'median': np.median(all_effect_sizes)
+            'mean': float(np.mean(all_effect_sizes)),
+            'std': float(np.std(all_effect_sizes)),
+            'min': float(np.min(all_effect_sizes)),
+            'max': float(np.max(all_effect_sizes)),
+            'median': float(np.median(all_effect_sizes))
         }
         
         # 生成可视化
@@ -300,21 +311,36 @@ class PrincipalNeuronAnalyzer:
             effect_sizes_df, key_neurons, positions_data
         )
         
+        # 确保所有numpy类型都转换为Python原生类型
+        def convert_numpy_types(obj):
+            if isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, dict):
+                return {k: convert_numpy_types(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy_types(item) for item in obj]
+            else:
+                return obj
+        
         return {
             'summary': {
                 'total_neurons': total_neurons,
                 'total_behaviors': total_behaviors,
                 'total_key_neurons': total_key_neurons,
-                'key_neurons_per_behavior': {behavior: len(neurons) for behavior, neurons in key_neurons.items()}
+                'key_neurons_per_behavior': {behavior: len(neurons) if isinstance(neurons, (list, tuple)) else (print(f"Debug: {behavior} is not list/tuple, type: {type(neurons)}, value: {neurons}") or 0) for behavior, neurons in key_neurons.items()}
             },
-            'effect_size_statistics': effect_size_stats,
-            'shared_analysis': shared_analysis,
+            'effect_size_statistics': convert_numpy_types(effect_size_stats),
+            'shared_analysis': convert_numpy_types(shared_analysis),
             'visualizations': {
                 'network_analysis': network_plot,
                 'comprehensive_analysis': comprehensive_plot
             },
-            'key_neurons': key_neurons,
-            'effect_sizes': effect_sizes_df.to_dict()
+            'key_neurons': convert_numpy_types(key_neurons),
+            'effect_sizes': convert_numpy_types(effect_sizes_df.to_dict())
         }
 
 def analyze_principal_neurons(data: pd.DataFrame,
