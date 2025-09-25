@@ -3,6 +3,8 @@ import Home from '../views/Home.vue'
 import Extraction from '../views/Extraction.vue'
 import Clustering from '../views/Clustering.vue'
 import Heatmap from '../views/Heatmap.vue'
+import Trace from '../views/Trace.vue'
+import NeuronAnalysis from '../views/NeuronAnalysis.vue'
 
 const routes = [
   {
@@ -35,6 +37,22 @@ const routes = [
     component: Heatmap,
     meta: {
       title: '热力图分析'
+    }
+  },
+  {
+    path: '/trace',
+    name: 'Trace',
+    component: Trace,
+    meta: {
+      title: '神经元活动Trace图'
+    }
+  },
+  {
+    path: '/neuron-analysis',
+    name: 'NeuronAnalysis',
+    component: NeuronAnalysis,
+    meta: {
+      title: '神经元分析'
     }
   },
 ]

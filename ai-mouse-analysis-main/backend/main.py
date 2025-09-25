@@ -47,6 +47,14 @@ from src.heatmap_multi_day import (
     MultiDayHeatmapConfig,
     analyze_multiday_heatmap
 )
+from src.trace_logic import (
+    TraceConfig,
+    load_trace_data,
+    generate_trace_plot
+)
+from src.effect_size_logic import analyze_effect_sizes
+from src.position_logic import process_position_data
+from src.principal_neuron_logic import analyze_principal_neurons
 import numpy as np
 from src.utils import save_plot_as_base64
 import base64
@@ -743,7 +751,8 @@ async def heatmap_analysis(
     file: UploadFile = File(...),
     start_behavior: str = Form(...),
     end_behavior: str = Form(...),
-    pre_behavior_time: float = Form(10.0),
+    pre_behavior_time: float = Form(15.0),
+    post_behavior_time: float = Form(45.0),
     min_duration: float = Form(1.0),
     sampling_rate: float = Form(4.8)
 ):
@@ -760,6 +769,7 @@ async def heatmap_analysis(
         config.START_BEHAVIOR = start_behavior
         config.END_BEHAVIOR = end_behavior
         config.PRE_BEHAVIOR_TIME = pre_behavior_time
+        config.POST_BEHAVIOR_TIME = post_behavior_time
         config.MIN_BEHAVIOR_DURATION = min_duration
         config.SAMPLING_RATE = sampling_rate
         config.OUTPUT_DIR = str(RESULTS_DIR / "heatmaps")
@@ -802,7 +812,7 @@ async def heatmap_analysis(
         for i, (start_begin, start_end, end_begin, end_end) in enumerate(behavior_pairs):
             # 提取行为序列数据
             sequence_data = extract_behavior_sequence_data(
-                data, start_begin, end_end, pre_behavior_time, sampling_rate
+                data, start_begin, end_end, pre_behavior_time, post_behavior_time, sampling_rate
             )
             
             if sequence_data is not None:
@@ -815,7 +825,7 @@ async def heatmap_analysis(
                 fig, current_order = create_behavior_sequence_heatmap(
                     standardized_data, start_begin, end_end,
                     start_behavior, end_behavior, pre_behavior_time,
-                    config, i, first_heatmap_order=first_heatmap_order
+                    post_behavior_time, config, i, first_heatmap_order=first_heatmap_order
                 )
                 
                 # 保存第一个热力图的排序顺序
@@ -843,7 +853,7 @@ async def heatmap_analysis(
         if len(all_sequence_data) > 1:
             avg_fig = create_average_sequence_heatmap(
                 all_sequence_data, start_behavior, end_behavior,
-                pre_behavior_time, config, first_heatmap_order=first_heatmap_order
+                pre_behavior_time, post_behavior_time, config, first_heatmap_order=first_heatmap_order
             )
             avg_plot_base64 = save_plot_as_base64(avg_fig)
             heatmap_images.append({
@@ -1228,6 +1238,128 @@ async def multi_day_heatmap_analysis(
         
         raise HTTPException(status_code=500, detail=f"多天热力图分析失败: {str(e)}")
 
+@app.post("/api/trace/analyze")
+async def trace_analysis(
+    file: UploadFile = File(...),
+    stamp_min: Optional[float] = Form(None),
+    stamp_max: Optional[float] = Form(None),
+    sort_method: str = Form("peak"),
+    custom_neuron_order: Optional[str] = Form(None),
+    trace_offset: float = Form(60.0),
+    scaling_factor: float = Form(80.0),
+    max_neurons: int = Form(60),
+    trace_alpha: float = Form(0.8),
+    line_width: float = Form(2.0),
+    sampling_rate: float = Form(4.8),
+    calcium_wave_threshold: float = Form(1.5),
+    min_prominence: float = Form(1.0),
+    min_rise_rate: float = Form(0.1),
+    max_fall_rate: float = Form(0.05)
+):
+    """
+    执行Trace图分析
+    
+    参数:
+    - file: 数据文件
+    - stamp_min: 最小时间戳
+    - stamp_max: 最大时间戳
+    - sort_method: 排序方式 ('original', 'peak', 'calcium_wave', 'custom')
+    - custom_neuron_order: 自定义神经元顺序（JSON格式）
+    - trace_offset: 神经元间垂直偏移
+    - scaling_factor: 信号振幅缩放因子
+    - max_neurons: 最大显示神经元数量
+    - trace_alpha: 线条透明度
+    - line_width: 线条宽度
+    - sampling_rate: 采样率
+    - calcium_wave_threshold: 钙波检测阈值
+    - min_prominence: 最小峰值突出度
+    - min_rise_rate: 最小上升速率
+    - max_fall_rate: 最大下降速率
+    """
+    try:
+        # 保存上传的文件
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+        shutil.copyfileobj(file.file, temp_file)
+        temp_file.close()
+        
+        # 加载数据
+        data = load_trace_data(temp_file.name)
+        
+        # 解析自定义神经元顺序
+        custom_order = []
+        if custom_neuron_order:
+            try:
+                custom_order = json.loads(custom_neuron_order)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="自定义神经元顺序格式错误，应为JSON数组格式")
+        
+        # 创建配置对象
+        config = TraceConfig()
+        config.stamp_min = stamp_min
+        config.stamp_max = stamp_max
+        config.sort_method = sort_method
+        config.custom_neuron_order = custom_order
+        config.trace_offset = trace_offset
+        config.scaling_factor = scaling_factor
+        config.max_neurons = max_neurons
+        config.trace_alpha = trace_alpha
+        config.line_width = line_width
+        config.sampling_rate = sampling_rate
+        config.calcium_wave_threshold = calcium_wave_threshold
+        config.min_prominence = min_prominence
+        config.min_rise_rate = min_rise_rate
+        config.max_fall_rate = max_fall_rate
+        
+        # 分离行为数据
+        behavior_data = None
+        if 'behavior' in data.columns:
+            behavior_data = data['behavior']
+            trace_data = data.drop(columns=['behavior'])
+        else:
+            trace_data = data
+        
+        # 将时间戳设置为索引
+        if 'stamp' in trace_data.columns:
+            trace_data = trace_data.set_index('stamp')
+            if behavior_data is not None:
+                # behavior_data已经是Series，需要重新创建索引
+                behavior_data = pd.Series(behavior_data.values, index=data['stamp'])
+        
+        # 生成Trace图
+        image_base64, info = generate_trace_plot(trace_data, behavior_data, config)
+        
+        # 清理临时文件
+        os.unlink(temp_file.name)
+        
+        # 返回结果
+        result = {
+            "success": True,
+            "image": image_base64,
+            "info": info,
+            "request_params": {
+                "filename": file.filename,
+                "stamp_min": stamp_min,
+                "stamp_max": stamp_max,
+                "sort_method": sort_method,
+                "custom_neuron_order": custom_order,
+                "trace_offset": trace_offset,
+                "scaling_factor": scaling_factor,
+                "max_neurons": max_neurons,
+                "trace_alpha": trace_alpha,
+                "line_width": line_width,
+                "sampling_rate": sampling_rate,
+                "calcium_wave_threshold": calcium_wave_threshold,
+                "min_prominence": min_prominence,
+                "min_rise_rate": min_rise_rate,
+                "max_fall_rate": max_fall_rate
+            }
+        }
+        
+        return result
+        
+    except Exception as e:
+        print(f"Trace图分析错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Trace图分析失败: {str(e)}")
 
 @app.get("/api/download/{filename}")
 async def download_file(filename: str):
@@ -1242,9 +1374,176 @@ async def download_file(filename: str):
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
 
+# ============================================================================
+# 神经元分析API端点
+# ============================================================================
+
+@app.post("/api/neuron/effect-size")
+async def effect_size_analysis(
+    file: UploadFile = File(...),
+    behavior_column: Optional[str] = Form(None),
+    threshold: float = Form(0.5)
+):
+    """效应量分析API"""
+    try:
+        # 保存上传的文件
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+        shutil.copyfileobj(file.file, temp_file)
+        temp_file.close()
+        
+        # 读取数据
+        data = pd.read_excel(temp_file.name)
+        
+        # 执行效应量分析
+        result = analyze_effect_sizes(data, behavior_column, threshold)
+        
+        # 清理临时文件
+        os.unlink(temp_file.name)
+        
+        return {
+            "success": True,
+            "result": result,
+            "request_params": {
+                "filename": file.filename,
+                "behavior_column": behavior_column,
+                "threshold": threshold
+            }
+        }
+        
+    except Exception as e:
+        print(f"效应量分析错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"效应量分析失败: {str(e)}")
+
+@app.post("/api/neuron/position")
+async def position_analysis(
+    positions_data: str = Form(...)
+):
+    """位置分析API"""
+    try:
+        # 解析位置数据
+        positions_dict = json.loads(positions_data)
+        
+        # 处理位置数据
+        result = process_position_data(positions_dict)
+        
+        return {
+            "success": True,
+            "result": result
+        }
+        
+    except Exception as e:
+        print(f"位置分析错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"位置分析失败: {str(e)}")
+
+@app.post("/api/neuron/principal-analysis")
+async def principal_neuron_analysis(
+    file: UploadFile = File(...),
+    behavior_column: Optional[str] = Form(None),
+    positions_data: Optional[str] = Form(None),
+    threshold: float = Form(0.5)
+):
+    """主神经元分析API"""
+    try:
+        # 保存上传的文件
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+        shutil.copyfileobj(file.file, temp_file)
+        temp_file.close()
+        
+        # 读取数据
+        data = pd.read_excel(temp_file.name)
+        
+        # 解析位置数据（如果有）
+        positions_dict = None
+        if positions_data:
+            positions_dict = json.loads(positions_data)
+        
+        # 执行主神经元分析
+        result = analyze_principal_neurons(data, behavior_column, positions_dict, threshold)
+        
+        # 清理临时文件
+        os.unlink(temp_file.name)
+        
+        return {
+            "success": True,
+            "result": result,
+            "request_params": {
+                "filename": file.filename,
+                "behavior_column": behavior_column,
+                "threshold": threshold,
+                "has_positions": positions_dict is not None
+            }
+        }
+        
+    except Exception as e:
+        print(f"主神经元分析错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"主神经元分析失败: {str(e)}")
+
+@app.post("/api/neuron/comprehensive-analysis")
+async def comprehensive_neuron_analysis(
+    file: UploadFile = File(...),
+    behavior_column: Optional[str] = Form(None),
+    positions_data: Optional[str] = Form(None),
+    threshold: float = Form(0.5)
+):
+    """综合神经元分析API - 整合所有三个模块"""
+    try:
+        # 保存上传的文件
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+        shutil.copyfileobj(file.file, temp_file)
+        temp_file.close()
+        
+        # 读取数据
+        data = pd.read_excel(temp_file.name)
+        
+        # 解析位置数据（如果有）
+        positions_dict = None
+        if positions_data:
+            positions_dict = json.loads(positions_data)
+        
+        # 1. 效应量分析
+        effect_size_result = analyze_effect_sizes(data, behavior_column, threshold)
+        
+        # 2. 主神经元分析
+        principal_result = analyze_principal_neurons(data, behavior_column, positions_dict, threshold)
+        
+        # 3. 位置分析（如果有位置数据）
+        position_result = None
+        if positions_dict:
+            position_result = process_position_data(positions_dict)
+        
+        # 整合结果
+        comprehensive_result = {
+            "effect_size_analysis": effect_size_result,
+            "principal_neuron_analysis": principal_result,
+            "position_analysis": position_result,
+            "summary": {
+                "total_neurons": len(data.columns) - (1 if behavior_column else 0),
+                "total_behaviors": len(principal_result["summary"]["total_behaviors"]),
+                "key_neurons_found": principal_result["summary"]["total_key_neurons"],
+                "analysis_timestamp": datetime.now().isoformat()
+            }
+        }
+        
+        # 清理临时文件
+        os.unlink(temp_file.name)
+        
+        return {
+            "success": True,
+            "result": comprehensive_result,
+            "request_params": {
+                "filename": file.filename,
+                "behavior_column": behavior_column,
+                "threshold": threshold,
+                "has_positions": positions_dict is not None
+            }
+        }
+        
+    except Exception as e:
+        print(f"综合神经元分析错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"综合神经元分析失败: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
-    # 增加请求头大小限制，解决431错误
     uvicorn.run(
         app, 
         host="0.0.0.0", 

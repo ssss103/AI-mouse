@@ -30,6 +30,14 @@
               <el-icon><TrendCharts /></el-icon>
               <span>热力图分析</span>
             </el-menu-item>
+            <el-menu-item index="/trace">
+              <el-icon><DataLine /></el-icon>
+              <span>Trace图</span>
+            </el-menu-item>
+            <el-menu-item index="/neuron-analysis">
+              <el-icon><DataAnalysis /></el-icon>
+              <span>神经元分析</span>
+            </el-menu-item>
           </el-menu>
         </div>
       </el-header>
@@ -50,7 +58,7 @@
 </template>
 
 <script setup>
-import { House, DataAnalysis, PieChart, TrendCharts } from '@element-plus/icons-vue'
+import { House, DataAnalysis, PieChart, TrendCharts, DataLine } from '@element-plus/icons-vue'
 </script>
 
 <style scoped>

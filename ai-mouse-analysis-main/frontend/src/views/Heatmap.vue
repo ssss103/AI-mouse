@@ -102,6 +102,18 @@
                   <div class="param-help">单位：秒</div>
                 </el-form-item>
                 
+                <el-form-item label="行为后时间">
+                  <el-input-number
+                    v-model="behaviorParams.post_behavior_time"
+                    :min="1"
+                    :max="120"
+                    :step="1"
+                    :precision="1"
+                    style="width: 100%"
+                  />
+                  <div class="param-help">单位：秒</div>
+                </el-form-item>
+                
                 <el-form-item label="采样频率">
                   <el-input-number
                     v-model="behaviorParams.sampling_rate"
@@ -739,7 +751,8 @@ const behaviorOptions = ref([...defaultBehaviorOptions])
 const behaviorParams = reactive({
   start_behavior: 'Explore',
   end_behavior: 'Water',
-  pre_behavior_time: 10.0,
+  pre_behavior_time: 15.0,
+  post_behavior_time: 45.0,
   sampling_rate: 4.8,
   min_behavior_duration: 1.0
 })
@@ -967,6 +980,7 @@ const startBehaviorAnalysis = async () => {
     formData.append('start_behavior', behaviorParams.start_behavior)
     formData.append('end_behavior', behaviorParams.end_behavior)
     formData.append('pre_behavior_time', behaviorParams.pre_behavior_time)
+    formData.append('post_behavior_time', behaviorParams.post_behavior_time)
     formData.append('min_duration', behaviorParams.min_behavior_duration)
     formData.append('sampling_rate', behaviorParams.sampling_rate)
     
