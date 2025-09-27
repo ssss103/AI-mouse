@@ -61,8 +61,9 @@
             @click.stop="selectMarker(neuronId)"
             @contextmenu.stop.prevent="removeMarker(neuronId)"
           >
-            <div class="marker-dot" :class="{ selected: selectedMarker === neuronId }"></div>
-            <div class="marker-label">{{ neuronId }}</div>
+            <div class="marker-label" :class="{ selected: selectedMarker === neuronId }">
+              {{ formatNeuronId(neuronId) }}
+            </div>
           </div>
         </div>
         
@@ -250,6 +251,16 @@ export default {
       ElMessage.success('位置数据已导出')
     }
     
+    // 格式化神经元ID显示
+    const formatNeuronId = (neuronId) => {
+      // 将 Neuron_1, Neuron_2 等格式化为 n1, n2
+      if (neuronId.startsWith('Neuron_')) {
+        const number = neuronId.replace('Neuron_', '')
+        return `n${number}`
+      }
+      return neuronId
+    }
+    
     // 发送位置数据更新事件
     const emitPositions = () => {
       emit('positions-updated', {
@@ -275,7 +286,8 @@ export default {
       addMarker,
       clearForm,
       clearAllMarks,
-      exportPositions
+      exportPositions,
+      formatNeuronId
     }
   }
 }
@@ -357,33 +369,29 @@ export default {
   z-index: 10;
 }
 
-.marker-dot {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #f56c6c;
-  border: 3px solid white;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+.marker-label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(245, 108, 108, 0.9);
+  color: white;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: bold;
+  white-space: nowrap;
+  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   transition: all 0.2s ease;
 }
 
-.marker-dot.selected {
-  background: #409eff;
-  transform: scale(1.2);
-}
-
-.marker-label {
-  position: absolute;
-  top: 25px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.8);
-  color: white;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 12px;
-  white-space: nowrap;
-  pointer-events: none;
+.marker-label.selected {
+  background: rgba(64, 158, 255, 0.9);
+  transform: translate(-50%, -50%) scale(1.1);
+  box-shadow: 0 2px 6px rgba(64, 158, 255, 0.4);
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
 .marker-panel {

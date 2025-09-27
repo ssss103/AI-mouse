@@ -52,13 +52,143 @@ from src.trace_logic import (
     load_trace_data,
     generate_trace_plot
 )
-from src.effect_size_logic import analyze_effect_sizes
-from src.position_logic import process_position_data
-from src.principal_neuron_logic import analyze_principal_neurons
+from src.effect_size_analysis import analyze_effect_sizes
+from src.position_marking import PositionMarker, process_position_data as process_position_data_v2, validate_position_data
+from src.neuron_visualization import analyze_neuron_visualization
 import numpy as np
+import matplotlib.pyplot as plt
 from src.utils import save_plot_as_base64
 import base64
 from io import BytesIO
+
+# 配置matplotlib中文字体
+def configure_chinese_font():
+    """配置matplotlib中文字体"""
+    try:
+        import matplotlib.pyplot as plt
+        import matplotlib.font_manager as fm
+        
+        # 尝试设置中文字体
+        chinese_fonts = [
+            'SimHei',  # 黑体
+            'Microsoft YaHei',  # 微软雅黑
+            'DejaVu Sans',  # 备用字体
+            'Arial Unicode MS'  # 备用字体
+        ]
+        
+        for font_name in chinese_fonts:
+            try:
+                plt.rcParams['font.sans-serif'] = [font_name]
+                plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+                break
+            except:
+                continue
+        
+        # 如果都失败了，使用默认设置
+        if 'font.sans-serif' not in plt.rcParams or not plt.rcParams['font.sans-serif']:
+            plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+            plt.rcParams['axes.unicode_minus'] = False
+            
+    except Exception as e:
+        print(f"字体配置警告: {e}")
+        # 使用默认设置
+        import matplotlib.pyplot as plt
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+        plt.rcParams['axes.unicode_minus'] = False
+
+# 初始化字体配置
+configure_chinese_font()
+
+def analyze_principal_neurons(data: pd.DataFrame, behavior_column: str = None, 
+                            positions_dict: dict = None, threshold: float = 0.5) -> dict:
+    """
+    执行主神经元分析，结合效应量分析和位置数据
+    
+    参数
+    ----------
+    data : pd.DataFrame
+        神经元活动数据
+    behavior_column : str, 可选
+        行为标签列名
+    positions_dict : dict, 可选
+        位置数据字典
+    threshold : float
+        效应量阈值
+        
+    返回
+    ----------
+    dict
+        分析结果
+    """
+    try:
+        # 1. 执行效应量分析
+        effect_size_result = analyze_effect_sizes(data, behavior_column)
+        
+        # 2. 如果有位置数据，执行综合分析
+        if positions_dict and positions_dict.get('positions'):
+            # 将位置数据转换为DataFrame格式
+            positions_data = []
+            for neuron_id, pos in positions_dict['positions'].items():
+                positions_data.append({
+                    'neuron_id': neuron_id,
+                    'x': pos.get('x', 0),
+                    'y': pos.get('y', 0)
+                })
+            positions_df = pd.DataFrame(positions_data)
+            
+            # 将效应量数据转换为DataFrame格式
+            effect_sizes_data = []
+            for neuron_id, effects in effect_size_result['effect_sizes'].items():
+                for behavior, effect_size in effects.items():
+                    effect_sizes_data.append({
+                        'neuron_id': neuron_id,
+                        'behavior': behavior,
+                        'effect_size': effect_size
+                    })
+            effect_sizes_df = pd.DataFrame(effect_sizes_data)
+            
+            # 执行神经元可视化分析
+            visualization_result = analyze_neuron_visualization(
+                effect_sizes_df, positions_df, threshold
+            )
+            
+            # 合并结果，确保数据类型正确
+            result = {
+                'success': True,
+                'effect_size_analysis': effect_size_result,
+                'position_analysis': {
+                    'total_positions': int(len(positions_data)),
+                    'positions': positions_dict['positions']
+                },
+                'comprehensive_analysis': visualization_result,
+                'statistics': {
+                    'total_neurons': int(len(effect_size_result.get('effect_sizes', {}))),
+                    'total_behaviors': int(len(effect_size_result.get('behavior_labels', []))),
+                    'total_positions': int(len(positions_data)),
+                    'analysis_timestamp': datetime.now().isoformat()
+                }
+            }
+        else:
+            # 只有效应量分析
+            result = {
+                'success': True,
+                'effect_size_analysis': effect_size_result,
+                'statistics': {
+                    'total_neurons': int(len(effect_size_result.get('effect_sizes', {}))),
+                    'total_behaviors': int(len(effect_size_result.get('behavior_labels', []))),
+                    'analysis_timestamp': datetime.now().isoformat()
+                }
+            }
+        
+        return result
+        
+    except Exception as e:
+        print(f"主神经元分析错误: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e),
+            'message': '主神经元分析失败'
+        }
 
 app = FastAPI(title="钙信号分析平台 API", version="1.0.0")
 
@@ -1018,8 +1148,8 @@ async def get_em_sort_labels(file: UploadFile = File(...)):
 @app.post("/api/heatmap/em-sort")
 async def em_sort_heatmap_analysis(
     file: UploadFile = File(...),
-    stamp_min: Optional[float] = Form(None),
-    stamp_max: Optional[float] = Form(None),
+    stamp_min: Optional[float] = Form(None),  # 不填时使用整个数据范围
+    stamp_max: Optional[float] = Form(None),  # 不填时使用整个数据范围
     sort_method: str = Form("peak"),
     custom_neuron_order: Optional[str] = Form(None),
     calcium_wave_threshold: float = Form(1.5),
@@ -1105,6 +1235,9 @@ async def em_sort_heatmap_analysis(
         
     except Exception as e:
         print(f"EM排序热力图分析错误: {e}")
+        print(f"错误类型: {type(e)}")
+        import traceback
+        print(f"错误堆栈: {traceback.format_exc()}")
         # 清理临时文件
         if 'temp_file' in locals() and temp_file.exists():
             temp_file.unlink()
@@ -1400,14 +1533,76 @@ async def effect_size_analysis(
             data[col] = pd.to_numeric(data[col], errors='coerce')
         
         # 执行效应量分析
-        result = analyze_effect_sizes(data, behavior_column, threshold)
+        result = analyze_effect_sizes(data, behavior_column)
         
         # 清理临时文件
         os.unlink(temp_file.name)
         
+        # 转换效应量数据结构以匹配前端期望
+        effect_sizes = result.get('effect_sizes', {})
+        behavior_labels = result.get('behavior_labels', [])
+        
+        # 将效应量数据从 {behavior: [neuron_effects]} 转换为 {neuron_id: {behavior: effect}}
+        formatted_effect_sizes = {}
+        if effect_sizes and behavior_labels:
+            for behavior, effects_array in effect_sizes.items():
+                for neuron_idx, effect_value in enumerate(effects_array):
+                    neuron_id = f"Neuron_{neuron_idx + 1}"
+                    if neuron_id not in formatted_effect_sizes:
+                        formatted_effect_sizes[neuron_id] = {}
+                    formatted_effect_sizes[neuron_id][behavior] = float(effect_value)
+        
+        # 重新组织统计数据结构，确保所有数据都是Python原生类型
+        data_summary = result.get('data_summary', {})
+        
+        # 转换behavior_counts中的numpy类型
+        behavior_counts = data_summary.get('behavior_counts', {})
+        if behavior_counts:
+            behavior_counts = {str(k): int(v) if hasattr(v, 'item') else v for k, v in behavior_counts.items()}
+        
+        statistics = {
+            'total_neurons': int(data_summary.get('total_neurons', 0)),
+            'total_behaviors': int(len(behavior_labels)),
+            'total_samples': int(data_summary.get('total_samples', 0)),
+            'key_neurons_found': int(sum(len(neurons.get('neuron_ids', [])) for neurons in result.get('top_neurons', {}).values())),
+            'analysis_timestamp': datetime.now().isoformat(),
+            'behavior_counts': behavior_counts
+        }
+        
+        # 转换key_neurons中的numpy类型
+        key_neurons = result.get('top_neurons', {})
+        formatted_key_neurons = {}
+        for behavior, neuron_info in key_neurons.items():
+            formatted_key_neurons[behavior] = {
+                'neuron_ids': [str(neuron_id) for neuron_id in neuron_info.get('neuron_ids', [])],
+                'effect_sizes': [float(effect) for effect in neuron_info.get('effect_sizes', [])],
+                'abs_effect_sizes': [float(effect) for effect in neuron_info.get('abs_effect_sizes', [])]
+            }
+        
+        # 转换nan_info中的numpy类型
+        nan_info = result.get('nan_info', {})
+        formatted_nan_info = {}
+        for key, value in nan_info.items():
+            if hasattr(value, 'item'):  # numpy scalar
+                formatted_nan_info[key] = value.item()
+            elif isinstance(value, (list, tuple)) and len(value) > 0 and hasattr(value[0], 'item'):
+                formatted_nan_info[key] = [v.item() if hasattr(v, 'item') else v for v in value]
+            else:
+                formatted_nan_info[key] = value
+        
+        # 重新组织数据结构以匹配前端期望
+        formatted_result = {
+            "effect_sizes": formatted_effect_sizes,
+            "behavior_labels": [str(label) for label in behavior_labels],
+            "key_neurons": formatted_key_neurons,
+            "statistics": statistics,
+            "nan_info": formatted_nan_info,
+            "processed_data": {}  # 不返回处理后的数据，避免numpy类型问题
+        }
+        
         return {
             "success": True,
-            "result": result,
+            "result": formatted_result,
             "request_params": {
                 "filename": file.filename,
                 "behavior_column": behavior_column,
@@ -1429,7 +1624,7 @@ async def position_analysis(
         positions_dict = json.loads(positions_data)
         
         # 处理位置数据
-        result = process_position_data(positions_dict)
+        result = process_position_data_v2(positions_dict)
         
         return {
             "success": True,
@@ -1490,72 +1685,706 @@ async def principal_neuron_analysis(
 
 @app.post("/api/neuron/comprehensive-analysis")
 async def comprehensive_neuron_analysis(
-    file: UploadFile = File(...),
-    behavior_column: Optional[str] = Form(None),
-    positions_data: Optional[str] = Form(None),
-    threshold: float = Form(0.5)
+    effect_size_data: str = Form(...),
+    position_data: Optional[str] = Form(None),
+    analysis_type: str = Form("effect-position"),
+    visualization_options: Optional[str] = Form(None),
+    selected_behavior: Optional[str] = Form(None),
+    neuron_type: Optional[str] = Form("key"),
+    display_options: Optional[str] = Form(None)
 ):
-    """综合神经元分析API - 整合所有三个模块"""
+    """综合神经元分析API - 基于已有的效应量分析结果和位置数据"""
     try:
-        # 保存上传的文件
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
-        shutil.copyfileobj(file.file, temp_file)
-        temp_file.close()
-        
-        # 读取数据
-        data = pd.read_excel(temp_file.name)
-        
-        # 确保数值列的数据类型正确
-        numeric_columns = data.select_dtypes(include=[np.number]).columns
-        for col in numeric_columns:
-            data[col] = pd.to_numeric(data[col], errors='coerce')
+        # 解析效应量分析结果
+        effect_size_result = json.loads(effect_size_data)
         
         # 解析位置数据（如果有）
-        positions_dict = None
-        if positions_data:
-            positions_dict = json.loads(positions_data)
+        position_data_dict = None
+        if position_data:
+            position_data_dict = json.loads(position_data)
         
-        # 1. 效应量分析
-        effect_size_result = analyze_effect_sizes(data, behavior_column, threshold)
+        # 解析可视化选项
+        viz_options = []
+        if visualization_options:
+            viz_options = json.loads(visualization_options)
         
-        # 2. 主神经元分析
-        principal_result = analyze_principal_neurons(data, behavior_column, positions_dict, threshold)
+        # 解析显示选项
+        display_opts = []
+        if display_options:
+            display_opts = json.loads(display_options)
         
-        # 3. 位置分析（如果有位置数据）
-        position_result = None
-        if positions_dict:
-            position_result = process_position_data(positions_dict)
-        
-        # 整合结果
+        # 基于分析类型执行不同的分析
         comprehensive_result = {
+            "analysis_type": analysis_type,
             "effect_size_analysis": effect_size_result,
-            "principal_neuron_analysis": principal_result,
-            "position_analysis": position_result,
-            "summary": {
-                "total_neurons": len(data.columns) - (1 if behavior_column else 0),
-                "total_behaviors": principal_result["summary"]["total_behaviors"],  # 直接使用整数，不调用len()
-                "key_neurons_found": principal_result["summary"]["total_key_neurons"],
-                "analysis_timestamp": datetime.now().isoformat()
-            }
+            "position_analysis": position_data_dict,
+            "visualization_options": viz_options
         }
         
-        # 清理临时文件
-        os.unlink(temp_file.name)
+        # 根据分析类型生成不同的可视化结果
+        if analysis_type == "effect-position" and position_data_dict:
+            # 效应量-位置关联分析
+            comprehensive_result["effect_position_plot"] = generate_effect_position_plot(
+                effect_size_result, position_data_dict
+            )
+        elif analysis_type == "spatial-clustering" and position_data_dict:
+            # 空间聚类分析
+            comprehensive_result["spatial_clustering_plot"] = generate_spatial_clustering_plot(
+                effect_size_result, position_data_dict
+            )
+        elif analysis_type == "behavior-position-heatmap" and position_data_dict:
+            # 行为-位置热力图
+            comprehensive_result["behavior_position_heatmap"] = generate_behavior_position_heatmap(
+                effect_size_result, position_data_dict
+            )
+        elif analysis_type == "comprehensive" and position_data_dict:
+            # 综合可视化
+            comprehensive_result["comprehensive_visualization"] = generate_comprehensive_visualization(
+                effect_size_result, position_data_dict, viz_options
+            )
+        elif analysis_type == "single-behavior-spatial" and position_data_dict and selected_behavior:
+            # 单行为空间分析
+            comprehensive_result["single_behavior_spatial_plot"] = generate_single_behavior_spatial_plot(
+                effect_size_result, position_data_dict, selected_behavior, neuron_type, display_opts
+            )
+        
+        # 添加统计信息
+        comprehensive_result["statistics"] = {
+            "total_neurons": effect_size_result.get("statistics", {}).get("total_neurons", 0),
+            "total_behaviors": effect_size_result.get("statistics", {}).get("total_behaviors", 0),
+            "total_positions": len(position_data_dict.get("positions", {})) if position_data_dict else 0,
+            "analysis_timestamp": datetime.now().isoformat()
+        }
         
         return {
             "success": True,
             "result": comprehensive_result,
             "request_params": {
-                "filename": file.filename,
-                "behavior_column": behavior_column,
-                "threshold": threshold,
-                "has_positions": positions_dict is not None
+                "analysis_type": analysis_type,
+                "has_positions": position_data_dict is not None,
+                "visualization_options": viz_options
             }
         }
         
     except Exception as e:
         print(f"综合神经元分析错误: {str(e)}")
         raise HTTPException(status_code=500, detail=f"综合神经元分析失败: {str(e)}")
+
+
+def generate_effect_position_plot(effect_size_result, position_data):
+    """生成效应量-位置关联图"""
+    try:
+        # 配置中文字体
+        configure_chinese_font()
+        
+        import matplotlib.pyplot as plt
+        import base64
+        from io import BytesIO
+        
+        # 创建图形
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        # 获取效应量数据
+        effect_sizes = effect_size_result.get('effect_sizes', {})
+        positions = position_data.get('positions', {})
+        
+        # 提取数据用于绘图
+        neuron_ids = []
+        max_effects = []
+        x_coords = []
+        y_coords = []
+        
+        for neuron_id, effects in effect_sizes.items():
+            if neuron_id in positions:
+                neuron_ids.append(neuron_id)
+                # 计算该神经元的最大效应量
+                max_effect = max([abs(effect) for effect in effects.values()])
+                max_effects.append(max_effect)
+                x_coords.append(positions[neuron_id]['x'])
+                y_coords.append(positions[neuron_id]['y'])
+        
+        # 绘制散点图
+        scatter = ax.scatter(x_coords, y_coords, c=max_effects, cmap='viridis', s=100, alpha=0.7)
+        
+        # 添加颜色条
+        plt.colorbar(scatter, ax=ax, label='最大效应量')
+        
+        # 设置标题和标签
+        ax.set_title('神经元效应量-位置分布图')
+        ax.set_xlabel('X坐标')
+        ax.set_ylabel('Y坐标')
+        
+        # 转换为base64
+        buffer = BytesIO()
+        plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+        buffer.seek(0)
+        plot_data = base64.b64encode(buffer.getvalue()).decode()
+        plt.close()
+        
+        return f"data:image/png;base64,{plot_data}"
+        
+    except Exception as e:
+        print(f"生成效应量-位置图错误: {e}")
+        return None
+
+
+def generate_spatial_clustering_plot(effect_size_result, position_data):
+    """生成空间聚类图"""
+    try:
+        # 配置中文字体
+        configure_chinese_font()
+        
+        import matplotlib.pyplot as plt
+        import base64
+        from io import BytesIO
+        from sklearn.cluster import KMeans
+        import numpy as np
+        
+        # 创建图形
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        # 获取位置数据
+        positions = position_data.get('positions', {})
+        
+        # 提取坐标
+        coords = []
+        neuron_ids = []
+        for neuron_id, pos in positions.items():
+            coords.append([pos['x'], pos['y']])
+            neuron_ids.append(neuron_id)
+        
+        if len(coords) < 3:
+            ax.text(0.5, 0.5, '位置数据不足，无法进行聚类分析', 
+                   ha='center', va='center', transform=ax.transAxes)
+        else:
+            # 执行K-means聚类
+            coords_array = np.array(coords)
+            n_clusters = min(3, len(coords) // 2)  # 最多3个聚类
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+            cluster_labels = kmeans.fit_predict(coords_array)
+            
+            # 绘制聚类结果
+            colors = ['red', 'blue', 'green', 'orange', 'purple']
+            for i in range(n_clusters):
+                mask = cluster_labels == i
+                ax.scatter(coords_array[mask, 0], coords_array[mask, 1], 
+                          c=colors[i % len(colors)], label=f'聚类 {i+1}', s=100, alpha=0.7)
+            
+            # 绘制聚类中心
+            ax.scatter(kmeans.cluster_centers_[:, 0], kmeans.cluster_centers_[:, 1], 
+                      c='black', marker='x', s=200, linewidths=3, label='聚类中心')
+            
+            ax.legend()
+        
+        # 设置标题和标签
+        ax.set_title('神经元空间聚类分析')
+        ax.set_xlabel('X坐标')
+        ax.set_ylabel('Y坐标')
+        
+        # 转换为base64
+        buffer = BytesIO()
+        plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+        buffer.seek(0)
+        plot_data = base64.b64encode(buffer.getvalue()).decode()
+        plt.close()
+        
+        return f"data:image/png;base64,{plot_data}"
+        
+    except Exception as e:
+        print(f"生成空间聚类图错误: {e}")
+        return None
+
+
+def generate_behavior_position_heatmap(effect_size_result, position_data):
+    """生成行为-位置热力图"""
+    try:
+        # 配置中文字体
+        configure_chinese_font()
+        
+        import matplotlib.pyplot as plt
+        import base64
+        from io import BytesIO
+        import numpy as np
+        
+        # 创建图形
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        # 获取数据
+        effect_sizes = effect_size_result.get('effect_sizes', {})
+        behavior_labels = effect_size_result.get('behavior_labels', [])
+        positions = position_data.get('positions', {})
+        
+        # 创建热力图数据
+        heatmap_data = []
+        for behavior in behavior_labels:
+            behavior_effects = []
+            for neuron_id in positions.keys():
+                if neuron_id in effect_sizes and behavior in effect_sizes[neuron_id]:
+                    behavior_effects.append(effect_sizes[neuron_id][behavior])
+                else:
+                    behavior_effects.append(0)
+            heatmap_data.append(behavior_effects)
+        
+        if heatmap_data:
+            # 绘制热力图
+            im = ax.imshow(heatmap_data, cmap='viridis', aspect='auto')
+            
+            # 设置标签
+            ax.set_xticks(range(len(positions)))
+            ax.set_xticklabels(list(positions.keys()), rotation=45)
+            ax.set_yticks(range(len(behavior_labels)))
+            ax.set_yticklabels(behavior_labels)
+            
+            # 添加颜色条
+            plt.colorbar(im, ax=ax, label='效应量')
+            
+            # 设置标题
+            ax.set_title('行为-神经元效应量热力图')
+            ax.set_xlabel('神经元ID')
+            ax.set_ylabel('行为类型')
+        
+        # 转换为base64
+        buffer = BytesIO()
+        plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+        buffer.seek(0)
+        plot_data = base64.b64encode(buffer.getvalue()).decode()
+        plt.close()
+        
+        return f"data:image/png;base64,{plot_data}"
+        
+    except Exception as e:
+        print(f"生成行为-位置热力图错误: {e}")
+        return None
+
+
+def generate_comprehensive_visualization(effect_size_result, position_data, viz_options):
+    """生成综合可视化"""
+    try:
+        # 配置中文字体
+        configure_chinese_font()
+        
+        import matplotlib.pyplot as plt
+        import base64
+        from io import BytesIO
+        
+        # 创建子图
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+        
+        # 1. 效应量分布直方图
+        effect_sizes = effect_size_result.get('effect_sizes', {})
+        all_effects = []
+        for neuron_effects in effect_sizes.values():
+            all_effects.extend([abs(effect) for effect in neuron_effects.values()])
+        
+        ax1.hist(all_effects, bins=20, alpha=0.7, color='skyblue', edgecolor='black')
+        ax1.set_title('效应量分布直方图')
+        ax1.set_xlabel('效应量绝对值')
+        ax1.set_ylabel('频次')
+        
+        # 2. 神经元位置分布
+        positions = position_data.get('positions', {})
+        x_coords = [pos['x'] for pos in positions.values()]
+        y_coords = [pos['y'] for pos in positions.values()]
+        
+        ax2.scatter(x_coords, y_coords, alpha=0.7, s=50)
+        ax2.set_title('神经元位置分布')
+        ax2.set_xlabel('X坐标')
+        ax2.set_ylabel('Y坐标')
+        
+        # 3. 行为类型统计
+        behavior_labels = effect_size_result.get('behavior_labels', [])
+        behavior_counts = effect_size_result.get('statistics', {}).get('behavior_counts', {})
+        
+        if behavior_counts:
+            behaviors = list(behavior_counts.keys())
+            counts = list(behavior_counts.values())
+            ax3.bar(behaviors, counts, alpha=0.7, color='lightcoral')
+            ax3.set_title('行为类型统计')
+            ax3.set_xlabel('行为类型')
+            ax3.set_ylabel('样本数量')
+            ax3.tick_params(axis='x', rotation=45)
+        
+        # 4. 关键神经元效应量
+        key_neurons = effect_size_result.get('key_neurons', {})
+        if key_neurons:
+            behaviors = list(key_neurons.keys())
+            neuron_counts = [len(info.get('neuron_ids', [])) for info in key_neurons.values()]
+            ax4.bar(behaviors, neuron_counts, alpha=0.7, color='lightgreen')
+            ax4.set_title('各行为关键神经元数量')
+            ax4.set_xlabel('行为类型')
+            ax4.set_ylabel('关键神经元数量')
+            ax4.tick_params(axis='x', rotation=45)
+        
+        plt.tight_layout()
+        
+        # 转换为base64
+        buffer = BytesIO()
+        plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+        buffer.seek(0)
+        plot_data = base64.b64encode(buffer.getvalue()).decode()
+        plt.close()
+        
+        return f"data:image/png;base64,{plot_data}"
+        
+    except Exception as e:
+        print(f"生成综合可视化错误: {e}")
+        return None
+
+
+def generate_single_behavior_spatial_plot(effect_size_result, position_data, selected_behavior, neuron_type, display_options):
+    """生成单行为空间分析图"""
+    try:
+        # 配置中文字体
+        configure_chinese_font()
+        
+        import matplotlib.pyplot as plt
+        import base64
+        from io import BytesIO
+        import numpy as np
+        
+        # 创建图形
+        fig, ax = plt.subplots(figsize=(12, 10))
+        
+        # 获取效应量数据和位置数据
+        effect_sizes = effect_size_result.get('effect_sizes', {})
+        positions = position_data.get('positions', {})
+        
+        # 准备数据
+        neuron_data = []
+        effect_values = []
+        x_coords = []
+        y_coords = []
+        neuron_ids = []
+        
+        # 根据神经元类型筛选数据
+        if neuron_type == 'key':
+            # 只显示关键神经元
+            key_neurons = effect_size_result.get('key_neurons', {}).get(selected_behavior, {})
+            key_neuron_ids = key_neurons.get('neuron_ids', [])
+            
+            for neuron_id in key_neuron_ids:
+                if neuron_id in positions and neuron_id in effect_sizes:
+                    if selected_behavior in effect_sizes[neuron_id]:
+                        neuron_data.append({
+                            'id': neuron_id,
+                            'x': positions[neuron_id]['x'],
+                            'y': positions[neuron_id]['y'],
+                            'effect': effect_sizes[neuron_id][selected_behavior]
+                        })
+        else:
+            # 显示所有神经元
+            for neuron_id, pos in positions.items():
+                if neuron_id in effect_sizes and selected_behavior in effect_sizes[neuron_id]:
+                    neuron_data.append({
+                        'id': neuron_id,
+                        'x': pos['x'],
+                        'y': pos['y'],
+                        'effect': effect_sizes[neuron_id][selected_behavior]
+                    })
+        
+        if not neuron_data:
+            ax.text(0.5, 0.5, f'没有找到行为 "{selected_behavior}" 的数据', 
+                   ha='center', va='center', transform=ax.transAxes, fontsize=16)
+            ax.set_title(f'行为 "{selected_behavior}" 空间分析 - 无数据')
+        else:
+            # 提取坐标和效应量
+            x_coords = [item['x'] for item in neuron_data]
+            y_coords = [item['y'] for item in neuron_data]
+            effect_values = [abs(item['effect']) for item in neuron_data]  # 使用绝对值
+            neuron_ids = [item['id'] for item in neuron_data]
+            
+            # 绘制散点图，颜色表示效应量大小
+            scatter = ax.scatter(x_coords, y_coords, c=effect_values, 
+                               cmap='viridis', s=100, alpha=0.8, 
+                               edgecolors='white', linewidth=0.5)
+            
+            # 添加颜色条
+            if 'show-colorbar' in display_options:
+                cbar = plt.colorbar(scatter, ax=ax, shrink=0.8)
+                cbar.set_label('效应量绝对值', fontsize=12)
+            
+            # 显示神经元ID
+            if 'show-neuron-ids' in display_options:
+                for i, neuron_id in enumerate(neuron_ids):
+                    ax.annotate(neuron_id, (x_coords[i], y_coords[i]),
+                              xytext=(5, 5), textcoords='offset points',
+                              fontsize=8, alpha=0.8, color='white',
+                              bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.6))
+            
+            # 显示效应量数值
+            if 'show-effect-values' in display_options:
+                for i, (neuron_id, effect) in enumerate(zip(neuron_ids, effect_values)):
+                    ax.annotate(f'{effect:.3f}', (x_coords[i], y_coords[i]),
+                              xytext=(0, -15), textcoords='offset points',
+                              fontsize=7, alpha=0.8, ha='center',
+                              bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
+        
+        # 设置标题和标签
+        neuron_type_text = "关键神经元" if neuron_type == 'key' else "所有神经元"
+        ax.set_title(f'行为 "{selected_behavior}" 空间分析 - {neuron_type_text}\n'
+                    f'({len(neuron_data)} 个神经元)', fontsize=14, fontweight='bold')
+        ax.set_xlabel('X坐标', fontsize=12)
+        ax.set_ylabel('Y坐标', fontsize=12)
+        
+        # 设置网格
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal', adjustable='box')
+        
+        # 添加统计信息
+        if neuron_data:
+            max_effect = max(effect_values)
+            min_effect = min(effect_values)
+            mean_effect = np.mean(effect_values)
+            
+            stats_text = f'效应量范围: {min_effect:.3f} - {max_effect:.3f}\n平均效应量: {mean_effect:.3f}'
+            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
+                   fontsize=10, verticalalignment='top',
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.8))
+        
+        plt.tight_layout()
+        
+        # 转换为base64
+        buffer = BytesIO()
+        plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+        buffer.seek(0)
+        plot_data = base64.b64encode(buffer.getvalue()).decode()
+        plt.close()
+        
+        return f"data:image/png;base64,{plot_data}"
+        
+    except Exception as e:
+        print(f"生成单行为空间分析图错误: {e}")
+        return None
+
+# ============================================================================
+# 三步走工作流API端点
+# ============================================================================
+
+@app.post("/api/workflow/step1-effect-size")
+async def step1_effect_size_analysis(
+    file: UploadFile = File(...),
+    behavior_column: Optional[str] = Form(None)
+):
+    """第一步：效应量分析 - 计算神经元与行为的效应量"""
+    try:
+        # 保存上传的文件
+        temp_file = TEMP_DIR / f"step1_effect_size_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+        with open(temp_file, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # 读取数据
+        if file.filename.endswith('.csv'):
+            data = pd.read_csv(temp_file)
+        elif file.filename.endswith(('.xlsx', '.xls')):
+            data = pd.read_excel(temp_file)
+        else:
+            try:
+                data = pd.read_csv(temp_file)
+            except:
+                try:
+                    data = pd.read_excel(temp_file)
+                except:
+                    raise ValueError(f"不支持的文件格式: {file.filename}")
+        
+        # 执行效应量分析
+        result = analyze_effect_sizes(data, behavior_column)
+        
+        # 保存效应量结果到临时文件，供后续步骤使用
+        effect_size_file = TEMP_DIR / f"effect_sizes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        
+        # 创建效应量DataFrame并保存
+        effect_df = pd.DataFrame(result['effect_sizes'])
+        effect_df.index = [f"Neuron_{i+1}" for i in range(len(effect_df))]
+        effect_df.index.name = "Neuron_ID"
+        effect_df.to_csv(effect_size_file)
+        
+        # 清理原始临时文件
+        temp_file.unlink()
+        
+        return {
+            "success": True,
+            "step": 1,
+            "step_name": "效应量分析",
+            "filename": file.filename,
+            "analysis_result": result,
+            "effect_size_file": str(effect_size_file),
+            "next_step": "位置标记",
+            "message": "第一步完成：效应量分析完成，可以进行位置标记"
+        }
+        
+    except Exception as e:
+        print(f"第一步效应量分析错误: {e}")
+        if 'temp_file' in locals() and temp_file.exists():
+            temp_file.unlink()
+        raise HTTPException(status_code=500, detail=f"效应量分析失败: {str(e)}")
+
+
+@app.post("/api/workflow/step2-position-marking")
+async def step2_position_marking(
+    image_file: UploadFile = File(...),
+    start_number: int = Form(1)
+):
+    """第二步：位置标记 - 在神经元图像上标记位置"""
+    try:
+        # 保存上传的图像文件
+        temp_image = TEMP_DIR / f"step2_image_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{image_file.filename}"
+        with open(temp_image, "wb") as buffer:
+            shutil.copyfileobj(image_file.file, buffer)
+        
+        # 创建位置标记器
+        marker = PositionMarker()
+        marker.current_number = start_number
+        
+        return {
+            "success": True,
+            "step": 2,
+            "step_name": "位置标记",
+            "image_file": str(temp_image),
+            "start_number": start_number,
+            "next_step": "神经元分析",
+            "message": "第二步完成：图像已上传，请在前端进行交互式位置标记",
+            "instructions": [
+                "1. 在图像上点击左键添加标记点",
+                "2. 右键点击撤销上一个点",
+                "3. 拖拽调整已标记点的位置",
+                "4. 完成后点击保存按钮"
+            ]
+        }
+        
+    except Exception as e:
+        print(f"第二步位置标记错误: {e}")
+        if 'temp_image' in locals() and temp_image.exists():
+            temp_image.unlink()
+        raise HTTPException(status_code=500, detail=f"位置标记失败: {str(e)}")
+
+
+@app.post("/api/workflow/step2-save-positions")
+async def step2_save_positions(
+    points_data: str = Form(...)  # JSON字符串格式的标记点数据
+):
+    """保存位置标记数据"""
+    try:
+        # 解析标记点数据
+        points = json.loads(points_data)
+        
+        # 处理位置数据
+        result = process_position_data_v2(points)
+        
+        # 保存到临时文件
+        position_file = TEMP_DIR / f"positions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        
+        # 创建位置标记器并导出数据
+        marker = PositionMarker()
+        for point in points:
+            marker.add_point(
+                x=point['x'],
+                y=point['y'],
+                neuron_id=point.get('neuron_id')
+            )
+        
+        marker.export_to_csv(str(position_file))
+        
+        return {
+            "success": True,
+            "position_file": str(position_file),
+            "total_points": result['total_points'],
+            "statistics": result['statistics'],
+            "message": f"成功保存 {result['total_points']} 个标记点"
+        }
+        
+    except Exception as e:
+        print(f"保存位置标记错误: {e}")
+        raise HTTPException(status_code=500, detail=f"保存位置标记失败: {str(e)}")
+
+
+@app.post("/api/workflow/step2-validate-positions")
+async def step2_validate_positions(
+    position_file: UploadFile = File(...)
+):
+    """验证位置标记数据"""
+    try:
+        # 保存上传的位置文件
+        temp_file = TEMP_DIR / f"validate_positions_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{position_file.filename}"
+        with open(temp_file, "wb") as buffer:
+            shutil.copyfileobj(position_file.file, buffer)
+        
+        # 读取位置数据
+        position_data = pd.read_csv(temp_file)
+        
+        # 验证数据
+        validation_result = validate_position_data(position_data)
+        
+        # 清理临时文件
+        temp_file.unlink()
+        
+        return {
+            "success": True,
+            "validation_result": validation_result,
+            "message": "位置数据验证完成"
+        }
+        
+    except Exception as e:
+        print(f"验证位置数据错误: {e}")
+        if 'temp_file' in locals() and temp_file.exists():
+            temp_file.unlink()
+        raise HTTPException(status_code=500, detail=f"验证位置数据失败: {str(e)}")
+
+
+@app.post("/api/workflow/step3-neuron-analysis")
+async def step3_neuron_analysis(
+    effect_size_file: str = Form(...),
+    position_file: UploadFile = File(...),
+    threshold: float = Form(0.5)
+):
+    """第三步：神经元分析 - 结合效应量和位置数据进行可视化分析"""
+    try:
+        # 读取效应量数据
+        if not os.path.exists(effect_size_file):
+            raise ValueError(f"效应量文件不存在: {effect_size_file}")
+        
+        effect_data = pd.read_csv(effect_size_file, index_col=0)
+        
+        # 保存位置数据文件
+        temp_position = TEMP_DIR / f"step3_position_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{position_file.filename}"
+        with open(temp_position, "wb") as buffer:
+            shutil.copyfileobj(position_file.file, buffer)
+        
+        # 读取位置数据
+        position_data = pd.read_csv(temp_position)
+        
+        # 执行神经元可视化分析
+        visualization_result = analyze_neuron_visualization(effect_data, position_data, threshold)
+        
+        # 将图形转换为base64编码
+        visualization_images = {}
+        for name, fig in visualization_result['figures'].items():
+            # 将图形转换为base64
+            buffer = BytesIO()
+            fig.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+            buffer.seek(0)
+            image_base64 = base64.b64encode(buffer.getvalue()).decode()
+            visualization_images[name] = f"data:image/png;base64,{image_base64}"
+            plt.close(fig)  # 关闭图形以释放内存
+        
+        # 清理临时文件
+        temp_position.unlink()
+        
+        return {
+            "success": True,
+            "step": 3,
+            "step_name": "神经元分析",
+            "analysis_result": visualization_result['analysis_result'],
+            "visualization_images": visualization_images,
+            "threshold": threshold,
+            "message": "第三步完成：神经元分析完成，生成了可视化结果"
+        }
+        
+    except Exception as e:
+        print(f"第三步神经元分析错误: {e}")
+        if 'temp_position' in locals() and temp_position.exists():
+            temp_position.unlink()
+        raise HTTPException(status_code=500, detail=f"神经元分析失败: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn

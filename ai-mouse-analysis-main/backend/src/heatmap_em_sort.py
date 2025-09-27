@@ -106,6 +106,8 @@ def load_and_preprocess_data(data: pd.DataFrame, config: EMSortHeatmapConfig) ->
         neural_data = data.copy()
     
     # 时间区间筛选
+    # 只有当用户明确设置了时间范围时才进行筛选
+    # 如果两个参数都为None，则使用整个数据范围
     if config.stamp_min is not None or config.stamp_max is not None:
         min_stamp = config.stamp_min if config.stamp_min is not None else neural_data.index.min()
         max_stamp = config.stamp_max if config.stamp_max is not None else neural_data.index.max()

@@ -261,9 +261,8 @@
                     :step="1"
                     :precision="2"
                     style="width: 100%"
-                    placeholder="留空表示从头开始"
+                    placeholder="留空表示从数据开始"
                   />
-                  <div class="param-help">开始时间戳</div>
                 </el-form-item>
                 
                 <el-form-item label="时间范围结束">
@@ -273,9 +272,8 @@
                     :step="1"
                     :precision="2"
                     style="width: 100%"
-                    placeholder="留空表示到结尾"
+                    placeholder="留空表示到数据结尾"
                   />
-                  <div class="param-help">结束时间戳</div>
                 </el-form-item>
                 
                 <el-form-item label="排序方式">
@@ -759,8 +757,8 @@ const behaviorParams = reactive({
 
 // EM排序热力图参数
 const emSortParams = reactive({
-  stamp_min: null,
-  stamp_max: null,
+  stamp_min: null,  // 不填时使用整个数据范围
+  stamp_max: null,  // 不填时使用整个数据范围
   sort_method: 'peak',
   custom_neuron_order: '',
   sampling_rate: 4.8,
@@ -1022,15 +1020,24 @@ const startEmSortAnalysis = async () => {
   try {
     const formData = new FormData()
     formData.append('file', emSortFileList.value[0].raw)
-    formData.append('stamp_min', emSortParams.stamp_min || '')
-    formData.append('stamp_max', emSortParams.stamp_max || '')
+    
+    // 只有当值不为null时才添加到FormData中
+    if (emSortParams.stamp_min !== null) {
+      formData.append('stamp_min', emSortParams.stamp_min)
+    }
+    if (emSortParams.stamp_max !== null) {
+      formData.append('stamp_max', emSortParams.stamp_max)
+    }
+    
     formData.append('sort_method', emSortParams.sort_method)
-    formData.append('custom_neuron_order', emSortParams.custom_neuron_order || '')
-    formData.append('sampling_rate', emSortParams.sampling_rate)
-    formData.append('calcium_wave_threshold', emSortParams.calcium_wave_threshold)
-    formData.append('min_prominence', emSortParams.min_prominence)
-    formData.append('min_rise_rate', emSortParams.min_rise_rate)
-    formData.append('max_fall_rate', emSortParams.max_fall_rate)
+    if (emSortParams.custom_neuron_order) {
+      formData.append('custom_neuron_order', emSortParams.custom_neuron_order)
+    }
+    formData.append('sampling_rate', emSortParams.sampling_rate.toString())
+    formData.append('calcium_wave_threshold', emSortParams.calcium_wave_threshold.toString())
+    formData.append('min_prominence', emSortParams.min_prominence.toString())
+    formData.append('min_rise_rate', emSortParams.min_rise_rate.toString())
+    formData.append('max_fall_rate', emSortParams.max_fall_rate.toString())
     
     const response = await fetch('http://localhost:8000/api/heatmap/em-sort', {
       method: 'POST',
@@ -1157,18 +1164,49 @@ const openSingleHeatmapModal = (imageUrl, title) => {
 }
 
 .section-title {
-  color: #409eff;
-  margin-bottom: 15px;
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 16px;
+  margin-bottom: 20px;
+  color: #303133;
+  font-size: 18px;
+  font-weight: bold;
 }
 
 .param-help {
   font-size: 12px;
   color: #909399;
-  margin-top: 2px;
+  margin-top: 4px;
+}
+
+/* 统一的表单项样式 */
+:deep(.el-form) {
+  margin-bottom: 0;
+}
+
+:deep(.el-form-item) {
+  margin-bottom: 18px;
+}
+
+:deep(.el-form-item__label) {
+  font-weight: 500;
+  color: #606266;
+}
+
+:deep(.el-input-number) {
+  width: 100%;
+}
+
+:deep(.el-select) {
+  width: 100%;
+}
+
+:deep(.el-input) {
+  width: 100%;
+}
+
+:deep(.el-slider) {
+  width: 100%;
 }
 
 .analysis-controls {

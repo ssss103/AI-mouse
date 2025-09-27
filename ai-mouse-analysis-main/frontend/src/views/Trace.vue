@@ -30,36 +30,6 @@
           </h3>
           
           <el-form :model="params" label-width="120px" size="small">
-            <!-- 文件上传 -->
-            <el-form-item label="数据文件">
-              <el-upload
-                ref="uploadRef"
-                :auto-upload="false"
-                :on-change="handleFileChange"
-                :show-file-list="false"
-                accept=".xlsx,.xls"
-                drag
-                style="width: 100%"
-              >
-                <el-icon class="el-icon--upload"><upload-filled /></el-icon>
-                <div class="el-upload__text">
-                  将文件拖到此处，或<em>点击上传</em>
-                </div>
-                <template #tip>
-                  <div class="el-upload__tip">
-                    只能上传 xlsx/xls 文件
-                  </div>
-                </template>
-              </el-upload>
-              <div v-if="selectedFile" class="file-info">
-                <el-tag type="success" size="small">
-                  {{ selectedFile.name }}
-                </el-tag>
-              </div>
-              <div class="param-help">
-                上传包含神经元活动数据的Excel文件
-              </div>
-            </el-form-item>
 
             <!-- 时间范围设置 -->
             <el-form-item label="时间范围">
@@ -348,7 +318,41 @@
 
           <!-- 空状态 -->
           <div v-if="!result && !loading && !error" class="empty-state">
-            <el-empty description="请上传数据文件并配置参数，然后点击生成Trace图" />
+            <!-- 文件上传区域 -->
+            <div class="upload-section">
+              <h3 class="section-title">
+                <el-icon><Upload /></el-icon>
+                数据文件上传
+              </h3>
+              <el-upload
+                ref="uploadRef"
+                class="upload-demo"
+                drag
+                :auto-upload="false"
+                :on-change="handleFileChange"
+                :show-file-list="false"
+                accept=".xlsx,.xls"
+              >
+                <el-icon class="el-icon--upload"><upload-filled /></el-icon>
+                <div class="el-upload__text">
+                  将 Excel 文件拖拽到此处，或<em>点击上传</em>
+                </div>
+                <template #tip>
+                  <div class="el-upload__tip">
+                    支持 .xlsx 和 .xls 格式，需包含神经元活动数据
+                  </div>
+                </template>
+              </el-upload>
+              <div v-if="selectedFile" class="file-info">
+                <el-tag type="success" size="small">
+                  {{ selectedFile.name }}
+                </el-tag>
+              </div>
+            </div>
+            
+            <div class="empty-message">
+              <el-empty description="请上传数据文件并配置参数，然后点击生成Trace图" />
+            </div>
           </div>
         </div>
       </el-col>
@@ -580,8 +584,37 @@ onMounted(() => {
 .param-help {
   font-size: 12px;
   color: #909399;
-  margin-top: 5px;
-  line-height: 1.4;
+  margin-top: 4px;
+}
+
+/* 统一的表单项样式 */
+:deep(.el-form) {
+  margin-bottom: 0;
+}
+
+:deep(.el-form-item) {
+  margin-bottom: 18px;
+}
+
+:deep(.el-form-item__label) {
+  font-weight: 500;
+  color: #606266;
+}
+
+:deep(.el-input-number) {
+  width: 100%;
+}
+
+:deep(.el-select) {
+  width: 100%;
+}
+
+:deep(.el-input) {
+  width: 100%;
+}
+
+:deep(.el-slider) {
+  width: 100%;
 }
 
 .file-info {
@@ -647,7 +680,19 @@ onMounted(() => {
 
 .empty-state {
   text-align: center;
-  padding: 60px 20px;
+  padding: 40px 20px;
+}
+
+.upload-section {
+  margin-bottom: 20px;
+}
+
+.file-info {
+  margin-top: 10px;
+}
+
+.empty-message {
+  margin-top: 20px;
 }
 
 .card {
